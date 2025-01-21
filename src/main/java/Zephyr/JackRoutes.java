@@ -82,12 +82,12 @@ public class JackRoutes {
         }
       }
     });
-      
+
     /**
      * 添加一个关键词
      * 前端传入Json对象，提取其input字段，写入数据库
      */
-    router.post("submit/keyword").handler( ctx-> {
+    router.post("/submit/keyword").handler( ctx-> {
       //获取请求体
       RequestBody body = ctx.body();
       //转化为JSON对象
