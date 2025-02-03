@@ -10,7 +10,6 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
-import jakarta.persistence.EntityManagerFactory;
 
 import java.nio.file.Paths;
 import java.sql.Connection;
@@ -24,7 +23,7 @@ import java.sql.SQLException;
  */
 public class MainVerticle extends AbstractVerticle {
   private static final Logger logger = LoggerFactory.getLogger(MainVerticle.class);
-
+  public static dbHelper dbHelperInstance;
   @Override
   public void start(Promise<Void> startPromise) {
     logger.info("Starting MainVerticle initialization...");
@@ -53,7 +52,7 @@ public class MainVerticle extends AbstractVerticle {
   private Future<Void> initializeServices() {
     Promise<Void> promise = Promise.promise();
 
-    dbHelper db = new dbHelper(vertx);
+    dbHelperInstance = new dbHelper(vertx);
     ValKeyManager valKeyManager = ValKeyManager.getInstance();
 
     // 测试 ValKey 连接
@@ -67,7 +66,7 @@ public class MainVerticle extends AbstractVerticle {
     }
 
     // 初始化数据库
-    db.init(ar -> {
+    dbHelperInstance.init(ar -> {
       if (ar.succeeded()) {
         logger.info("Database initialized successfully.");
         promise.complete();
@@ -94,26 +93,26 @@ public class MainVerticle extends AbstractVerticle {
 
     // 添加 BodyHandler
     router.route().handler(BodyHandler.create()
-        .setBodyLimit(50_000)
-        .setDeleteUploadedFilesOnEnd(true)
-        .setHandleFileUploads(true)
-        .setUploadsDirectory(Paths.get("Zephyr", "uploads").toString())
-        .setMergeFormAttributes(true)
-      );
+      .setBodyLimit(50_000)
+      .setDeleteUploadedFilesOnEnd(true)
+      .setHandleFileUploads(true)
+      .setUploadsDirectory(Paths.get("Zephyr", "uploads").toString())
+      .setMergeFormAttributes(true)
+    );
 
-      // 配置子路由
-      router.route("/api/jack/*").subRouter(new JackRoutes(vertx).getSubRouter());
-      router.route("/api/austin/*").subRouter(new AustinRoutes(vertx).getSubRouter());
-      router.route("/api/v1/*").subRouter(new YukiRoutes(vertx).getSubRouter());
+    // 配置子路由
+    router.route("/api/jack/*").subRouter(new JackRoutes(vertx).getSubRouter());
+    router.route("/api/austin/*").subRouter(new AustinRoutes(vertx).getSubRouter());
+    router.route("/api/v1/*").subRouter(new YukiRoutes(vertx).getSubRouter());
 
-      // 添加健康检查路由
-      router.get("/healthz").handler(this::handleHealthCheck);
+    // 添加健康检查路由
+    router.get("/healthz").handler(this::handleHealthCheck);
 
-      // 错误处理
-      setupErrorHandlers(router);
+    // 错误处理
+    setupErrorHandlers(router);
 
-      return router;
-    }
+    return router;
+  }
 
   private void handleHealthCheck(RoutingContext ctx) {
     JsonObject responseObject = new JsonObject();

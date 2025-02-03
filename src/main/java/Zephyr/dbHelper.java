@@ -22,6 +22,7 @@ import java.util.Map;
  * @author binaryYuki
  */
 public class dbHelper {
+
   private static HikariDataSource dataSource;
   private static EntityManagerFactory entityManagerFactory;
 
@@ -72,6 +73,12 @@ public class dbHelper {
     return entityManagerFactory;
   }
 
+
+  public EntityManager getEntityManager() {
+    return entityManagerFactory.createEntityManager();
+  }
+
+
   public static void closeEntityManagerFactory() {
     if (entityManagerFactory != null && entityManagerFactory.isOpen()) {
       entityManagerFactory.close();
@@ -84,9 +91,21 @@ public class dbHelper {
    * @return Connection object
    * @throws SQLException if a database access error occurs
    */
+
   public Connection getConnection() throws SQLException {
     return dataSource.getConnection();
   }
+
+
+  public void close() {
+    if (dataSource != null && !dataSource.isClosed()) {
+      dataSource.close();
+    }
+    if (entityManagerFactory != null && entityManagerFactory.isOpen()) {
+      entityManagerFactory.close();
+    }
+  }
+
 
   // get datasource
   public static HikariDataSource getDataSource() {
@@ -99,6 +118,7 @@ public class dbHelper {
    *
    * @param resultHandler Handler for the result of the initialization
    */
+
   public void init(Handler<AsyncResult<Void>> resultHandler) {
     // Flyway migration is already handled in the constructor
     resultHandler.handle(Future.succeededFuture());

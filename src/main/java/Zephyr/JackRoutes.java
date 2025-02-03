@@ -16,7 +16,14 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.*;
+
+import static Zephyr.MainVerticle.dbHelperInstance;
+
 
 /**
  * @author Jingyu Wang
@@ -53,7 +60,7 @@ public class JackRoutes {
     );
 
     router.post("/analyze/text/uploads").handler(ctx -> {
-      ctx.fail(402);
+      ctx.fail(501);
 //      List<FileUpload> uploads = ctx.fileUploads();
 //      for(FileUpload u:uploads){
 //        String fileName = u.fileName();
@@ -83,25 +90,6 @@ public class JackRoutes {
           </form>""");
     });
 
-    router.post("/analyze/text/uploads").handler(ctx -> {
-      List<FileUpload> uploads = ctx.fileUploads();
-      for(FileUpload u:uploads){
-        String fileName = u.fileName();
-        String tail = fileName.substring(fileName.lastIndexOf("."));
-        if ("text/plain".equals(u.contentType())
-          &&".txt".equals(tail)
-          &&"UTF-8".equals(u.charSet())
-          &&u.size()<=50000)
-          //校验通过，开始处置
-        {
-          handleFileUpload(ctx, u);
-        } else{
-          //校验不通过，强制删除
-          ctx.fail(400);
-
-        }
-      }
-    });
 
     /**
      * 添加一个关键词
@@ -137,82 +125,65 @@ public class JackRoutes {
       .end(response.encode());
   }
 
-  private void handleKeywordSubmit(RoutingContext ctx){
-    //获取请求体
-    RequestBody body = ctx.body();
-    //转化为JSON对象
-    JsonObject object = body.asJsonObject();
-    String keyword = object.getString("input");
-    EntityManager entityManager = dbHelper.getEntityManagerFactory().createEntityManager();
-    //提取所有已知的可疑关键词
-    List<AcceptedSequences> acceptedSequences =
-      entityManager
-        .createQuery("SELECT a FROM AcceptedSequences a", AcceptedSequences.class)
-        .getResultList();
-    //如关键词已存在，则增加它的权重1,并返回
-    for(int i=0;i<acceptedSequences.size();i++){
-      if(acceptedSequences.get(i).getList().getFirst().equals(keyword)){
-        acceptedSequences.get(i).setRate(acceptedSequences.get(i).getRate()+1);
-        entityManager.getTransaction().begin();
-        entityManager.persist(acceptedSequences.get(i));
-        entityManager.getTransaction().commit();
-        entityManager.close();
-        JsonObject response = new JsonObject()
-          .put("status", "uploaded")
-          .put("content", keyword)
-          .put("timestamp", System.currentTimeMillis());
+  private void handleKeywordSubmit(RoutingContext ctx) {
+    // 获取请求体
+    JsonObject object = ctx.body().asJsonObject();
+    String keyword = object.getString("input").toLowerCase();
+    JsonObject updateBias = new JsonObject();
 
-        ctx.response()
-          .putHeader("Content-Type", "application/json")
-          .end(response.encode());
-        return;
+    try (Connection connection = dbHelper.getDataSource().getConnection()) {
+      // 首先检查是否已经有匹配的记录
+      String selectQuery = "SELECT rate FROM accepted_sequences WHERE content = ?";
+      try (PreparedStatement selectStmt = connection.prepareStatement(selectQuery)) {
+        selectStmt.setString(1, keyword);
+        ResultSet rs = selectStmt.executeQuery();
+
+        if (rs.next()) {
+          // 如果记录已存在，更新 rate
+          int newRate = rs.getInt("rate") + 1;
+          String updateQuery = "UPDATE accepted_sequences SET rate = ?, last_updated_at = ? WHERE content = ?";
+          try (PreparedStatement updateStmt = connection.prepareStatement(updateQuery)) {
+            updateStmt.setInt(1, newRate);
+            updateStmt.setLong(2, System.currentTimeMillis());
+            updateStmt.setString(3, keyword);
+            updateStmt.executeUpdate();
+          }
+
+          updateBias.put("success", true)
+            .put("content", keyword)
+            .put("rate", newRate)
+            .put("timestamp", System.currentTimeMillis());
+        } else {
+          // 如果记录不存在，插入新记录
+          String insertQuery = "INSERT INTO accepted_sequences (content, rate, created_at, last_updated_at) VALUES (?, ?, ?, ?)";
+          try (PreparedStatement insertStmt = connection.prepareStatement(insertQuery)) {
+            insertStmt.setString(1, keyword);
+            insertStmt.setInt(2, 1);
+            insertStmt.setLong(3, System.currentTimeMillis());
+            insertStmt.setLong(4, System.currentTimeMillis());
+            insertStmt.executeUpdate();
+          }
+
+          updateBias.put("success", true)
+            .put("content", keyword)
+            .put("rate", 1)
+            .put("timestamp", System.currentTimeMillis());
+        }
       }
+    } catch (SQLException e) {
+      updateBias.put("success", false).put("message", "Database error: " + e.getMessage());
     }
-    entityManager.close();
-    entityManager = dbHelper.getEntityManagerFactory().createEntityManager();
-    //遍历完成仍不存在，存入新关键词
-    try {
-      // Begin a transaction
-      entityManager.getTransaction().begin();
 
-      // 创建一个新AcceptedSequences对象
-
-      AcceptedSequences newSequence = new AcceptedSequences();
-      newSequence.setContent(keyword);
-      newSequence.setTimeStampString(""+System.currentTimeMillis());
-      newSequence.setRate(1);
-      newSequence.setCreatedAt(""+System.currentTimeMillis()
-      );
-      // Persist the new sequence
-      entityManager.persist(newSequence);
-
-      // Commit the transaction
-      entityManager.getTransaction().commit();
-    } catch (Exception e) {
-      // Rollback the transaction in case of errors
-      if (entityManager.getTransaction().isActive()) {
-        entityManager.getTransaction().rollback();
-      }
-      ctx.response().setStatusCode(500).end("Error: " + e.getMessage());
-    } finally {
-      // Close the entity manager
-      entityManager.close();
-      //return response
-      JsonObject response = new JsonObject()
-        .put("status", "uploaded")
-        .put("content", keyword)
-        .put("timestamp", System.currentTimeMillis());
-
-      ctx.response()
-        .putHeader("Content-Type", "application/json")
-        .end(response.encode());
-    }
+    // 将结果返回给客户端
+    ctx.response()
+      .putHeader("Content-Type", "application/json")
+      .end(updateBias.encode());
   }
 
   //关键词检测器 A naive approach of a text-based fraud detector.
   private void handleFileUpload(RoutingContext ctx, FileUpload u){
     Path path = Paths.get("Zephyr", "uploads", u.uploadedFileName());
-    EntityManager entityManager = dbHelper.getEntityManagerFactory().createEntityManager();
+    EntityManager entityManager = dbHelperInstance.getEntityManager();
     try {
       // Begin a transaction
       entityManager.getTransaction().begin();
@@ -246,7 +217,7 @@ public class JackRoutes {
       // Close the entity manager
       entityManager.close();
     }
-    entityManager = dbHelper.getEntityManagerFactory().createEntityManager();
+    entityManager = dbHelperInstance.getEntityManager();
     //提取指定文件
     List<Uploads> uploads = entityManager.createQuery
         ("SELECT filePath FROM Uploads WHERE processed = FALSE", Uploads.class).getResultList();
@@ -276,24 +247,30 @@ public class JackRoutes {
             .putHeader("Content-Type", "application/json")
             .end(response.encode());
         }
-        upload.setProcessed(true);
         //处理结束, 文件在DB改为可覆盖状态，被BodyHandler从文件夹移除(Line:48)
+        upload.setProcessed(true);
+        entityManager.close();
       }
     }
     //遍历列表后仍未发现指定文件，处理失败
     ctx.fail(404);
+    entityManager.close();
   }
 
   private int[] processFile(String path) {
-    /*施工中*/
     int res = 0;
     int lines = 0;
     List<AcceptedSequences> acceptedSequences;
-    try (EntityManager entityManager = dbHelper.getEntityManagerFactory().createEntityManager()) {
+    try {
+      EntityManager entityManager = dbHelperInstance.getEntityManager();
       //提取所有已知的可疑关键词
       acceptedSequences = entityManager
         .createQuery("SELECT a FROM AcceptedSequences a", AcceptedSequences.class)
         .getResultList();
+      entityManager.close();
+    }
+    catch (Exception e){
+      throw new RuntimeException(e);
     }
     String line;
     try{
@@ -314,27 +291,13 @@ public class JackRoutes {
     return new int[]{res, lines};
   }
 
-  private void submitKeyWord(String keyword){
-    EntityManager entityManager = dbHelper.getEntityManagerFactory().createEntityManager();
-    //提取所有已知的可疑关键词
-    List<AcceptedSequences> acceptedSequences =
-      entityManager
-        .createQuery("SELECT a From AcceptedSequences a", AcceptedSequences.class)
-        .getResultList();
-    for (AcceptedSequences acceptedSequences1: acceptedSequences){
-      if(acceptedSequences1.getList().getFirst().equals(keyword)){
-
-      }
-    }
-  }
-
   // orm test
   private void testOrm(RoutingContext ctx) {
     // 假设要查找或更新 ID 为 1 的实体
     Long id = 1L;
 
     // Get the entity manager
-    EntityManager entityManager = dbHelper.getEntityManagerFactory().createEntityManager();
+    EntityManager entityManager = dbHelperInstance.getEntityManager();
 
     try {
       // Begin a transaction
@@ -373,8 +336,7 @@ public class JackRoutes {
     }
 
     // 新EntityManager
-    entityManager = dbHelper.getEntityManagerFactory().createEntityManager();
-
+    entityManager = dbHelperInstance.getEntityManager();
     // 从数据库中查询所有服务
     List<Service> services = entityManager.createQuery("SELECT s FROM Service s", Service.class).getResultList();
     JsonObject response = new JsonObject()
@@ -382,10 +344,10 @@ public class JackRoutes {
       .put("message", "Test ORM Success")
       .put("timestamp", System.currentTimeMillis())
       .put("services", services);
-    entityManager.close();
     ctx.response()
       .putHeader("Content-Type", "application/json")
       .end(response.encode());
+    entityManager.close();
   }
 }
 

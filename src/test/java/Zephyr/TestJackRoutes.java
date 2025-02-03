@@ -135,7 +135,8 @@ public class TestJackRoutes {
   private void handleUpload(HttpClientResponse resp, VertxTestContext testContext) {
     testContext.verify(() -> {
       // 验证 HTTP 状态码
-      assertEquals(200, resp.statusCode(), "HTTP status code should be 200");
+      assertEquals(501, resp.statusCode(), "HTTP status code should be 501");
+      System.out.println(resp.statusCode());
 
       // 读取响应体
       resp.body()

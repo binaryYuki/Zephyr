@@ -16,7 +16,6 @@ public class AcceptedSequences {
    * updated_at：更新时间
    * 实现一个方法： 导出为 list
    */
-
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY) // 主键自动生成
   private Long id;
