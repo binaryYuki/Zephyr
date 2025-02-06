@@ -16,7 +16,7 @@ repositories {
 
 val vertxVersion = "4.5.12"
 val junitJupiterVersion = "5.11.4"
-val flywayVersion = "11.3.0"
+val flywayVersion = "11.3.1"
 val dotenvVersion = "3.1.0"
 val nettyVersion = "4.1.117.Final"
 val hibernateCoreVersion = "6.6.5.Final"
